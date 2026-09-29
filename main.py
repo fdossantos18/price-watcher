@@ -8,6 +8,7 @@ API_URL = "https://api.reverb.com/api/listings"
 SEARCH_QUERY = "Yamaha CK61"
 TARGET_PRICE = 900
 MIN_PLAUSIBLE_PRICE = 300
+MIN_DROP_TO_ALERT = 5.00
 CSV_FILE = "prices.csv"
 
 
@@ -31,6 +32,21 @@ def summarize(listing):
     }
 
 
+def load_last_known_prices():
+    last_seen = {}
+    if not os.path.exists(CSV_FILE):
+        return last_seen
+
+    with open(CSV_FILE, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            listing_id = int(row["id"])
+            price = float(row["price"])
+            last_seen[listing_id] = price 
+    return last_seen
+
+
+
 def log_listings(listings):
     file_exists = os.path.exists(CSV_FILE)
     with open(CSV_FILE, "a", newline="") as f:
@@ -44,22 +60,38 @@ def log_listings(listings):
 
 
 if __name__ == "__main__":
+    last_known = load_last_known_prices()
+
     result = search_listings(SEARCH_QUERY)
     data = result.json()
     print("Total listings found:", data["total"], "| Pages:", data["total_pages"])
 
     listings = [summarize(l) for l in data["listings"]]
+    listings = [l for l in listings if l["price"] >= MIN_PLAUSIBLE_PRICE]
     print("Listings retrieved:", len(listings))
 
-    listings = [l for l in listings if l["price"] >= MIN_PLAUSIBLE_PRICE]
     log_listings(listings)
-    deals = [l for l in listings if l["price"] <= TARGET_PRICE]
-    deals.sort(key=lambda l: l["price"])
 
-    print(f"{len(deals)} listing(s) at or below ${TARGET_PRICE}:")
-    for l in deals:
-        print(f"${l['price']:.2f} | {l['condition']} | {l['name']}")
-        print(f"   {l['url']}")
+    alerts = []
+    for l in listings:
+        if l["price"] > TARGET_PRICE:
+            continue # not a deal, skip it 
+
+        previous_price = last_known.get(l["id"])
+        if previous_price is None:
+            alerts.append((l, "NEW"))
+        elif previous_price - l["price"] >= MIN_DROP_TO_ALERT:
+            alerts.append((l, f"DROPPED from ${previous_price:.2f}"))
+
+    if not alerts:
+        print("No new or dropped deals since last check.")
+    else:
+        print(f"\n{len(alerts)} alerts(s):")
+        for l, reason in alerts:
+            print(f"[{reason}] ${l['price']:.2f} | {l['condition']} | {l['name']}")
+            print(f"   {l['url']}")
+
+
     
 
 
