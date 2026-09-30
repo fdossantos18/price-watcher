@@ -31,11 +31,16 @@ def search_listings(query):
 
 
 def summarize(listing):
+    shipping = get_us_shipping_cost(listing)
+    price = listing["price"]["amount_cents"] / 100 
+
     return {
         "id": listing["id"],
         "name": listing.get("name") or listing.get("model"),
         "condition": listing["condition"]["display_name"],
-        "price": listing["price"]["amount_cents"] / 100,
+        "price": price, 
+        "shipping": shipping,
+        "total_cost": price + shipping if shipping is not None else None, 
         "url": listing.get("_links", {}).get("web", {}).get("href"),
     }
 
@@ -49,8 +54,10 @@ def load_last_known_prices():
         reader = csv.DictReader(f)
         for row in reader:
             listing_id = int(row["id"])
-            price = float(row["price"])
-            last_seen[listing_id] = price 
+            total_cost = row.get("total_cost")
+            if not total_cost:
+                continue # old format, not total_cost recorded - skip it
+            last_seen[listing_id] = float(total_cost)
     return last_seen
 
 
@@ -60,10 +67,10 @@ def log_listings(listings):
     with open(CSV_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["checked_at", "id", "name", "condition", "price", "url"])
+            writer.writerow(["checked_at", "id", "name", "condition", "price", "shipping", "total_cost", "url"])
         now = datetime.now().isoformat(timespec="seconds")
         for l in listings:
-            writer.writerow([now, l["id"], l["name"], l["condition"], l["price"], l["url"]])
+            writer.writerow([now, l["id"], l["name"], l["condition"], l["price"], l["shipping"], l["total_cost"], l["url"]])
 
 
 def send_email_alert(alerts):
@@ -86,6 +93,14 @@ def send_email_alert(alerts):
         server.send_message(message)
 
 
+def get_us_shipping_cost(listings):
+    rates = listings.get("shipping", {}).get("rates", [])
+    for rate in rates:
+        if rate.get("region_code") == "US":
+            return rate["rate"]["amount_cents"] / 100
+        
+    return None # No US rate found - unknown, treat with caution
+
 
 if __name__ == "__main__":
     last_known = load_last_known_prices()
@@ -102,13 +117,16 @@ if __name__ == "__main__":
 
     alerts = []
     for l in listings:
-        if l["price"] > TARGET_PRICE:
+        if l["total_cost"] is None:
+            continue  # skip listings where we can't confirm total cost 
+
+        if l["total_cost"] > TARGET_PRICE:
             continue # not a deal, skip it 
 
         previous_price = last_known.get(l["id"])
         if previous_price is None:
             alerts.append((l, "NEW"))
-        elif previous_price - l["price"] >= MIN_DROP_TO_ALERT:
+        elif previous_price - l["total_cost"] >= MIN_DROP_TO_ALERT:
             alerts.append((l, f"DROPPED from ${previous_price:.2f}"))
 
     if not alerts:
@@ -116,7 +134,7 @@ if __name__ == "__main__":
     else:
         print(f"\n{len(alerts)} alerts(s):")
         for l, reason in alerts:
-            print(f"[{reason}] ${l['price']:.2f} | {l['condition']} | {l['name']}")
+            print(f"[{reason}] ${l['total_cost']:.2f} total (${l['price']:.2f} + ${l['shipping']:.2f} shipping) | {l['condition']} | {l['name']}")
             print(f"   {l['url']}")
 
         # Send email 
