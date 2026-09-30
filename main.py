@@ -3,6 +3,14 @@ import os
 from datetime import datetime
 import requests
 import json 
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+
+load_dotenv()
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 API_URL = "https://api.reverb.com/api/listings"
 SEARCH_QUERY = "Yamaha CK61"
@@ -58,6 +66,26 @@ def log_listings(listings):
             writer.writerow([now, l["id"], l["name"], l["condition"], l["price"], l["url"]])
 
 
+def send_email_alert(alerts):
+    subject = f"Price Watcher: {len(alerts)} new deal(s) on {SEARCH_QUERY}"
+
+    lines = []
+    for l, reason in alerts:
+        lines.append(f"[{reason}] ${l['price']:.2f} | {l['condition']} | {l['name']}")
+        lines.append(f"    {l['url']}")
+    body = "\n".join(lines)
+
+    message = MIMEText(body)
+    message["Subject"] = subject
+    message["From"] = GMAIL_ADDRESS
+    message["To"] = GMAIL_ADDRESS
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+        server.send_message(message)
+
+
 
 if __name__ == "__main__":
     last_known = load_last_known_prices()
@@ -90,6 +118,14 @@ if __name__ == "__main__":
         for l, reason in alerts:
             print(f"[{reason}] ${l['price']:.2f} | {l['condition']} | {l['name']}")
             print(f"   {l['url']}")
+
+        # Send email 
+        send_email_alert(alerts)
+        print("Email sent.")
+
+    
+
+    
 
 
     
