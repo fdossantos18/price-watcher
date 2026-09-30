@@ -1,2 +1,5 @@
 venv/
 prices.csv
+.env
+
+.env
